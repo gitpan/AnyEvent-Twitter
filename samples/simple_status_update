@@ -1,0 +1,27 @@
+#!/opt/perl/bin/perl
+use utf8;
+use AnyEvent;
+use AnyEvent::Twitter;
+
+my $cv = AnyEvent->condvar;
+
+my $twitty =
+   AnyEvent::Twitter->new (
+      username => $ARGV[0],
+      password => $ARGV[1],
+   );
+
+$twitty->update_status ($ARGV[2], sub {
+   my ($twitty, $status, $js, $error) = @_;
+
+   if (defined $error) {
+      warn "Error: $error\n";
+
+   } else {
+      printf "updated your status to: %s\n", $status;
+   }
+
+   $cv->send;
+});
+
+$cv->recv;
