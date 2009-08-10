@@ -1,7 +1,5 @@
 package AnyEvent::Twitter;
-use strict;
-no warnings;
-
+use common::sense;
 use Carp qw/croak/;
 use AnyEvent;
 use AnyEvent::HTTP;
@@ -13,7 +11,7 @@ use Encode;
 
 use base qw/Object::Event/;
 
-our $VERSION = '0.1';
+our $VERSION = '0.2';
 
 our $DEBUG = 0;
 
@@ -23,7 +21,7 @@ AnyEvent::Twitter - Implementation of the Twitter API for AnyEvent
 
 =head1 VERSION
 
-Version 0.1
+Version 0.2
 
 =head1 SYNOPSIS
 
@@ -64,6 +62,8 @@ Version 0.1
          # ...
       }
    });
+
+   $twitty->start; # important!
 
 =head1 DESCRIPTION
 
@@ -128,6 +128,10 @@ Your twitter username.
 
 Your twitter password.
 
+=item state => $new_state_struct
+
+Initializer for the value given to the C<state> method (see below).
+
 =item bandwidth => $bandwidth_factor
 
 C<$bandwidth_factor> is the amount of "bandwidth" that is consumed
@@ -175,7 +179,7 @@ sub _schedule_next_tick {
 
    unless (defined $last_req_hdrs) {
       $self->_tick;
-      next;
+      return;
    }
 
    my $next_tick = 0;
@@ -236,6 +240,10 @@ sub _tick {
 }
 
 =item $obj->start
+
+This method will start requesting the data you are interested in.
+See also the C<receive_...> methods, about how to say what you are
+interested in.
 
 =cut
 
@@ -435,6 +443,13 @@ sub update_status {
 =item my $state_struct = $obj->state
 
 =item $obj->state ($new_state_struct)
+
+With these methods you can set the internal sequence state. Whenever
+a special kind of data is retrieved from Twitter the most recent
+sequence id of the entry is remembered in the hash C<$state_struct>.
+
+You can use this method to store the state or restore it. This is useful
+if you have an application that shouldn't forget which entries it already saw.
 
 =cut
 

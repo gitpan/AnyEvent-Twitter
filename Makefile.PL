@@ -18,6 +18,7 @@ WriteMakefile(
         'JSON'           => 0,
         'MIME::Base64'   => 0,
         'Scalar::Util'   => 0,
+        'Encode'         => 0
     },
     dist                => {
        COMPRESS => 'gzip -9f',

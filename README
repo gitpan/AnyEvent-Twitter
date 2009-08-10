@@ -2,7 +2,7 @@ NAME
     AnyEvent::Twitter - Implementation of the Twitter API for AnyEvent
 
 VERSION
-    Version 0.1
+    Version 0.2
 
 SYNOPSIS
        use AnyEvent::Twitter;
@@ -42,6 +42,8 @@ SYNOPSIS
              # ...
           }
        });
+
+       $twitty->start; # important!
 
 DESCRIPTION
     This is a lightweight implementation of the Twitter API. It's currently
@@ -96,6 +98,10 @@ METHODS
         password => $password
             Your twitter password.
 
+        state => $new_state_struct
+            Initializer for the value given to the "state" method (see
+            below).
+
         bandwidth => $bandwidth_factor
             $bandwidth_factor is the amount of "bandwidth" that is consumed
             by the regular polling. The default value is 0.95. Any value
@@ -106,6 +112,10 @@ METHODS
             polls.
 
     $obj->start
+        This method will start requesting the data you are interested in.
+        See also the "receive_..." methods, about how to say what you are
+        interested in.
+
     $obj->receive_statuses_friends ($count, [$weight])
         This will enable polling for the statuses of your friends.
 
@@ -144,6 +154,13 @@ METHODS
 
     my $state_struct = $obj->state
     $obj->state ($new_state_struct)
+        With these methods you can set the internal sequence state. Whenever
+        a special kind of data is retrieved from Twitter the most recent
+        sequence id of the entry is remembered in the hash $state_struct.
+
+        You can use this method to store the state or restore it. This is
+        useful if you have an application that shouldn't forget which
+        entries it already saw.
 
 EVENTS
     statuses_<statuspath> => @statuses
