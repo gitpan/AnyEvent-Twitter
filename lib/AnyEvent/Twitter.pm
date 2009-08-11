@@ -11,7 +11,7 @@ use Encode;
 
 use base qw/Object::Event/;
 
-our $VERSION = '0.2';
+our $VERSION = '0.21';
 
 our $DEBUG = 0;
 
@@ -21,7 +21,7 @@ AnyEvent::Twitter - Implementation of the Twitter API for AnyEvent
 
 =head1 VERSION
 
-Version 0.2
+Version 0.21
 
 =head1 SYNOPSIS
 

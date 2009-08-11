@@ -2,7 +2,7 @@ NAME
     AnyEvent::Twitter - Implementation of the Twitter API for AnyEvent
 
 VERSION
-    Version 0.2
+    Version 0.21
 
 SYNOPSIS
        use AnyEvent::Twitter;

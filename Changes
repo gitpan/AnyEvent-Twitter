@@ -1,5 +1,8 @@
 Revision history for AnyEvent::Twitter
 
+0.21    Tue Aug 11 08:37:27 CEST 2009
+        - added common::sense to prereq.
+
 0.2     Mon Aug 10 10:07:28 CEST 2009
         - fixed some missing documentation.
         - using common::sense for all scripts and modules.
