@@ -2,7 +2,7 @@ NAME
     AnyEvent::Twitter - Implementation of the Twitter API for AnyEvent
 
 VERSION
-    Version 0.21
+    Version 0.25
 
 SYNOPSIS
        use AnyEvent::Twitter;
@@ -132,6 +132,22 @@ METHODS
         you may set or retrieve via the "state" method. I recommend caching
         the state data structure.
 
+    $obj->receive_statuses_mentions ($count, [$weight])
+        This will enable polling for the statuses that mention you.
+
+        $count is the amount of backlog the requests will get (see Twitter
+        API for the maximum values). If it is undefined no count will be set
+        for the request.
+
+        About $weight see the "WEIGHTS AND RATE LIMITING" section.
+
+        Whenever a new status is received the "statuses_mentions" event is
+        emitted (see below).
+
+        The "id" of the seen statuses are recorded in a data structure which
+        you may set or retrieve via the "state" method. I recommend caching
+        the state data structure.
+
     $obj->check_status_length ($status)
         This method checks whether the string in $status does not exceed the
         maximum length of a status update.
@@ -170,7 +186,7 @@ EVENTS
            friends
            public    (currently unimplemented)
            user      (currently unimplemented)
-           mentions  (currently unimplemented)
+           mentions
 
         @statuses contains the new status updates. Each element of @statuses
         is an array reference containing:
@@ -211,6 +227,9 @@ EVENTS
 AUTHOR
     Robin Redeker, "<elmex@ta-sa.org>"
 
+ACKNOWLEDGEMENTS
+      Nuno Nunes (nfmnunes @ CPAN)     - For initial patch for mentions.
+
 SEE ALSO
     Object::Event
 
@@ -239,6 +258,10 @@ SUPPORT
           Channel    : #ae_xmpp
 
           Feel free to join and ask questions!
+
+    *   Homepage:
+
+        <http://software.schmorp.de/pkg/AnyEvent-Twitter.html>
 
     *   AnnoCPAN: Annotated CPAN documentation
 

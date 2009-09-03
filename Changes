@@ -1,5 +1,9 @@
 Revision history for AnyEvent::Twitter
 
+0.25    Thu Sep  3 14:29:12 CEST 2009
+        - implemented mentions.  Thanks go to Nuno Nunes
+          (nfmnunes @ CPAN) for the initial patch.
+
 0.21    Tue Aug 11 08:37:27 CEST 2009
         - added common::sense to prereq.
 

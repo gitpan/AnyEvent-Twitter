@@ -11,7 +11,7 @@ use Encode;
 
 use base qw/Object::Event/;
 
-our $VERSION = '0.21';
+our $VERSION = '0.25';
 
 our $DEBUG = 0;
 
@@ -21,7 +21,7 @@ AnyEvent::Twitter - Implementation of the Twitter API for AnyEvent
 
 =head1 VERSION
 
-Version 0.21
+Version 0.25
 
 =head1 SYNOPSIS
 
@@ -230,13 +230,20 @@ sub _tick {
       my $task = $self->{schedule}->{$_};
       $task->{wait} += $task->{weight};
 
+      warn "TASK: $_ => $task->{wait} | $task->{weight}\n" if $DEBUG;
+
       $max_task = $task
          if not (defined $max_task)
             || $max_task->{wait} <= $task->{wait};
+
+      warn "MAXTASK: $max_task->{wait}\n" if $DEBUG;
    }
+
+   return unless $max_task;
 
    weaken $self;
    $max_task->{request}->(sub { $self->_schedule_next_tick ($_[0]) });
+   $max_task->{wait} = 0;
 }
 
 =item $obj->start
@@ -295,12 +302,17 @@ sub _analze_statuses {
 }
 
 sub _fetch_status_update {
-   my ($self, $category, $next_cb) = @_;
+   my ($self, $statuses_cat, $next_cb) = @_;
+
+   my $category =
+      $statuses_cat =~ /^(.*?)_timeline$/
+         ? $1
+         : $statuses_cat;
 
    my $st = ($self->{state}->{statuses}->{$category} ||= {});
 
    my $url  = URI::URL->new ($self->{base_url});
-   $url->path_segments ('statuses', $category . "_timeline.json");
+   $url->path_segments ('statuses', $statuses_cat . ".json");
 
    if (defined $st->{id}) {
       $url->query_form (since_id => $st->{id});
@@ -359,7 +371,38 @@ sub receive_statuses_friends {
       wait    => 0,
       weight  => $weight || 1,
       count   => $count,
-      request => sub { $self->_fetch_status_update ('friends', @_) },
+      request => sub { $self->_fetch_status_update ('friends_timeline', @_) },
+   };
+}
+
+=item $obj->receive_statuses_mentions ($count, [$weight])
+
+This will enable polling for the statuses that mention you.
+
+C<$count> is the amount of backlog the requests will get (see Twitter API
+for the maximum values). If it is undefined no count will be set for the
+request.
+
+About C<$weight> see the L<WEIGHTS AND RATE LIMITING> section.
+
+Whenever a new status is received the C<statuses_mentions> event is emitted
+(see below).
+
+The C<id> of the seen statuses are recorded in a data structure which
+you may set or retrieve via the C<state> method. I recommend caching the
+state data structure.
+
+=cut
+
+sub receive_statuses_mentions {
+   my ($self, $count, $weight) = @_;
+
+   weaken $self;
+   $self->{schedule}->{statuses_mentions} = {
+      wait    => 0,
+      weight  => $weight || 1,
+      count   => $count,
+      request => sub { $self->_fetch_status_update ('mentions', @_) },
    };
 }
 
@@ -469,7 +512,7 @@ which can be one of these:
    friends
    public    (currently unimplemented)
    user      (currently unimplemented)
-   mentions  (currently unimplemented)
+   mentions
 
 C<@statuses> contains the new status updates.
 Each element of C<@statuses> is an array reference containing:
@@ -528,6 +571,10 @@ sub error { }
 
 Robin Redeker, C<< <elmex@ta-sa.org> >>
 
+=head1 ACKNOWLEDGEMENTS
+
+  Nuno Nunes (nfmnunes @ CPAN)     - For initial patch for mentions.
+
 =head1 SEE ALSO
 
 L<Object::Event>
@@ -561,6 +608,10 @@ See the same channel as the L<AnyEvent::XMPP> module:
   Channel    : #ae_xmpp
 
   Feel free to join and ask questions!
+
+=item * Homepage:
+
+L<http://software.schmorp.de/pkg/AnyEvent-Twitter.html>
 
 =item * AnnoCPAN: Annotated CPAN documentation
 
