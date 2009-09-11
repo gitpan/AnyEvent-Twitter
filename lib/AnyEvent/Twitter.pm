@@ -8,10 +8,11 @@ use JSON;
 use MIME::Base64;
 use Scalar::Util qw/weaken/;
 use Encode;
+use Time::Local;
 
 use base qw/Object::Event/;
 
-our $VERSION = '0.25';
+our $VERSION = '0.26';
 
 our $DEBUG = 0;
 
@@ -21,7 +22,7 @@ AnyEvent::Twitter - Implementation of the Twitter API for AnyEvent
 
 =head1 VERSION
 
-Version 0.25
+Version 0.26
 
 =head1 SYNOPSIS
 
@@ -242,7 +243,8 @@ sub _tick {
    return unless $max_task;
 
    weaken $self;
-   $max_task->{request}->(sub { $self->_schedule_next_tick ($_[0]) });
+   $max_task->{request}->(
+      sub { $self->_schedule_next_tick ($_[0]) }, $max_task);
    $max_task->{wait} = 0;
 }
 
@@ -274,6 +276,39 @@ sub _unescape_madness {
    $str
 }
 
+our %MONTHS = (
+   Jan => 0,
+   Feb => 1,
+   Mar => 2,
+   Apr => 3,
+   May => 4,
+   Jun => 5,
+   Jul => 6,
+   Aug => 7,
+   Sep => 8,
+   Oct => 9,
+   Nov => 10,
+   Dec => 11,
+);
+
+sub _twitter_time_to_timestamp {
+   my ($tt) = @_;
+
+   # Sat Jan 24 22:14:29 +0000 2009
+   $tt =~ /^\S+\s+(\S+)\s+(\d+)\s+(\d+):(\d+):(\d+)\s+([+-]?)(\d{2})(\d{2})\s+(\d+)$/
+      or return undef;
+
+   my ($month, $mday, $h, $m, $s, $offs_pref, $offs_h, $offs_min, $year) =
+      ($1, $2, $3, $4, $5, $6, $7, $8, $9);
+
+   my $ts = Time::Local::timegm ($s, $m, $h, $mday, $MONTHS{$month}, $year - 1900);
+
+   my $offs_sec = $offs_h * 3600 + $offs_min * 60;
+
+   $ts += ($offs_pref eq '-' ? -1 : 1) * $offs_sec;
+
+   $ts
+}
 
 sub _analze_statuses {
    my ($self, $category, $data) = @_;
@@ -294,6 +329,7 @@ sub _analze_statuses {
 
       $pps->{text}        = _unescape_madness $_->{text};
       $pps->{screen_name} = _unescape_madness $_->{user}->{screen_name};
+      $pps->{timestamp}   = _twitter_time_to_timestamp $_->{created_at};
 
       [$pps, $_]
    } @{$js || []};
@@ -302,7 +338,7 @@ sub _analze_statuses {
 }
 
 sub _fetch_status_update {
-   my ($self, $statuses_cat, $next_cb) = @_;
+   my ($self, $statuses_cat, $next_cb, $task) = @_;
 
    my $category =
       $statuses_cat =~ /^(.*?)_timeline$/
@@ -316,10 +352,11 @@ sub _fetch_status_update {
 
    if (defined $st->{id}) {
       $url->query_form (since_id => $st->{id});
+
+   } else {
+      $url->query_form (count => 200); # fetch as many as possible
    }
 
-   $url->query_form (count => $st->{count})
-      if defined $st->{count};
 
    my $hdrs = { $self->_get_basic_auth };
 
@@ -344,13 +381,9 @@ sub _fetch_status_update {
       };
 }
 
-=item $obj->receive_statuses_friends ($count, [$weight])
+=item $obj->receive_statuses_friends ([$weight])
 
 This will enable polling for the statuses of your friends.
-
-C<$count> is the amount of backlog the requests will get (see Twitter API
-for the maximum values). If it is undefined no count will be set for the
-request.
 
 About C<$weight> see the L<WEIGHTS AND RATE LIMITING> section.
 
@@ -364,24 +397,19 @@ state data structure.
 =cut
 
 sub receive_statuses_friends {
-   my ($self, $count, $weight) = @_;
+   my ($self, $weight) = @_;
 
    weaken $self;
    $self->{schedule}->{statuses_friends} = {
       wait    => 0,
       weight  => $weight || 1,
-      count   => $count,
       request => sub { $self->_fetch_status_update ('friends_timeline', @_) },
    };
 }
 
-=item $obj->receive_statuses_mentions ($count, [$weight])
+=item $obj->receive_statuses_mentions ([$weight])
 
 This will enable polling for the statuses that mention you.
-
-C<$count> is the amount of backlog the requests will get (see Twitter API
-for the maximum values). If it is undefined no count will be set for the
-request.
 
 About C<$weight> see the L<WEIGHTS AND RATE LIMITING> section.
 
@@ -395,13 +423,12 @@ state data structure.
 =cut
 
 sub receive_statuses_mentions {
-   my ($self, $count, $weight) = @_;
+   my ($self, $weight) = @_;
 
    weaken $self;
    $self->{schedule}->{statuses_mentions} = {
       wait    => 0,
       weight  => $weight || 1,
-      count   => $count,
       request => sub { $self->_fetch_status_update ('mentions', @_) },
    };
 }
@@ -514,8 +541,9 @@ which can be one of these:
    user      (currently unimplemented)
    mentions
 
-C<@statuses> contains the new status updates.
-Each element of C<@statuses> is an array reference containing:
+C<@statuses> contains the new status updates. The order is usually that the
+newest statuses come first.  Each element of C<@statuses> is an array reference
+containing:
 
    $status, $raw_status
 
@@ -534,6 +562,11 @@ This is the text of the status update.
 =item screen_name => $screen_name
 
 This contains the screen name of the user who posted this status update.
+
+=item timestamp => $timestamp
+
+This contains the creation time of the status as unix timestamp
+in UTC time.
 
 =back
 

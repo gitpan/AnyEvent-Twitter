@@ -1,5 +1,11 @@
 Revision history for AnyEvent::Twitter
 
+0.26    Fri Sep 11 23:08:36 CEST 2009
+        - removed 'count' parameter, it was defunct anyways.
+          Now as many status updates as possible are fetched when
+          no state exists yet.
+        - added unix timestamp decoding.
+
 0.25    Thu Sep  3 14:29:12 CEST 2009
         - implemented mentions.  Thanks go to Nuno Nunes
           (nfmnunes @ CPAN) for the initial patch.

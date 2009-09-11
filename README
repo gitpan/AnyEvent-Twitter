@@ -2,7 +2,7 @@ NAME
     AnyEvent::Twitter - Implementation of the Twitter API for AnyEvent
 
 VERSION
-    Version 0.25
+    Version 0.26
 
 SYNOPSIS
        use AnyEvent::Twitter;
@@ -116,12 +116,8 @@ METHODS
         See also the "receive_..." methods, about how to say what you are
         interested in.
 
-    $obj->receive_statuses_friends ($count, [$weight])
+    $obj->receive_statuses_friends ([$weight])
         This will enable polling for the statuses of your friends.
-
-        $count is the amount of backlog the requests will get (see Twitter
-        API for the maximum values). If it is undefined no count will be set
-        for the request.
 
         About $weight see the "WEIGHTS AND RATE LIMITING" section.
 
@@ -132,12 +128,8 @@ METHODS
         you may set or retrieve via the "state" method. I recommend caching
         the state data structure.
 
-    $obj->receive_statuses_mentions ($count, [$weight])
+    $obj->receive_statuses_mentions ([$weight])
         This will enable polling for the statuses that mention you.
-
-        $count is the amount of backlog the requests will get (see Twitter
-        API for the maximum values). If it is undefined no count will be set
-        for the request.
 
         About $weight see the "WEIGHTS AND RATE LIMITING" section.
 
@@ -188,8 +180,9 @@ EVENTS
            user      (currently unimplemented)
            mentions
 
-        @statuses contains the new status updates. Each element of @statuses
-        is an array reference containing:
+        @statuses contains the new status updates. The order is usually that
+        the newest statuses come first. Each element of @statuses is an
+        array reference containing:
 
            $status, $raw_status
 
@@ -205,6 +198,10 @@ EVENTS
         screen_name => $screen_name
             This contains the screen name of the user who posted this status
             update.
+
+        timestamp => $timestamp
+            This contains the creation time of the status as unix timestamp
+            in UTC time.
 
         $raw_status is the parsed JSON structure of the new status. About
         the interesting fields please consult
