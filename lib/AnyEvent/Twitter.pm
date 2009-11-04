@@ -12,7 +12,7 @@ use Time::Local;
 
 use base qw/Object::Event/;
 
-our $VERSION = '0.26';
+our $VERSION = '0.27';
 
 our $DEBUG = 0;
 
@@ -22,11 +22,13 @@ AnyEvent::Twitter - Implementation of the Twitter API for AnyEvent
 
 =head1 VERSION
 
-Version 0.26
+Version 0.27
 
 =head1 SYNOPSIS
 
    use AnyEvent::Twitter;
+
+   my $cv = AnyEvent->condvar; # see below about this
 
    my $twitty =
       AnyEvent::Twitter->new (
@@ -65,6 +67,9 @@ Version 0.26
    });
 
    $twitty->start; # important!
+
+   $cv->recv; # AnyEvent idiom to start some event loop or wait until
+              # the condvar is 'sent'
 
 =head1 DESCRIPTION
 
@@ -152,7 +157,6 @@ sub new {
    my $self  = $class->SUPER::new (
       bandwidth        => 0.95,
       @_,
-      enable_methods => 1
    );
 
    if ($self->{bandwidth} == 0) {
@@ -193,7 +197,7 @@ sub _schedule_next_tick {
    } elsif ($last_req_hdrs->{Status} eq '400'
             && $last_req_hdrs->{'x-ratelimit-reset'} > 0) {
       # probably not neccesary this special case, but better be safe...
-      $next_tick = $last_req_hdrs->{'x-ratelimit-remaining'} - time;
+      $next_tick = $remaining_time;
 
    } elsif ($last_req_hdrs->{'x-ratelimit-reset'} > 0 # some basic sanity checks
             && $last_req_hdrs->{'x-ratelimit-limit'} != 0) {
@@ -587,7 +591,7 @@ C<$remaining_time> seconds.
 
 =cut
 
-sub next_request_in { }
+sub next_request_in : event_cb { }
 
 =item error => $error_string
 
@@ -596,7 +600,7 @@ a human readable error message.
 
 =cut
 
-sub error { }
+sub error : event_cb { }
 
 =back
 

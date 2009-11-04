@@ -2,10 +2,12 @@ NAME
     AnyEvent::Twitter - Implementation of the Twitter API for AnyEvent
 
 VERSION
-    Version 0.26
+    Version 0.27
 
 SYNOPSIS
        use AnyEvent::Twitter;
+
+       my $cv = AnyEvent->condvar; # see below about this
 
        my $twitty =
           AnyEvent::Twitter->new (
@@ -44,6 +46,9 @@ SYNOPSIS
        });
 
        $twitty->start; # important!
+
+       $cv->recv; # AnyEvent idiom to start some event loop or wait until
+                  # the condvar is 'sent'
 
 DESCRIPTION
     This is a lightweight implementation of the Twitter API. It's currently

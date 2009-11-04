@@ -1,5 +1,9 @@
 Revision history for AnyEvent::Twitter
 
+0.3     Thu Nov  5 00:09:11 CET 2009
+        - requiring new Object::Event API.
+        - fixed bug with 400 status, thanks to some weird Japanese forum.
+
 0.26    Fri Sep 11 23:08:36 CEST 2009
         - removed 'count' parameter, it was defunct anyways.
           Now as many status updates as possible are fetched when

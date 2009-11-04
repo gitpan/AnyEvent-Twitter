@@ -14,7 +14,7 @@ WriteMakefile(
         'AnyEvent'       => 3.5,
         'AnyEvent::HTTP' => 0,
         'URI::URL'       => 0,
-        'Object::Event'  => 0,
+        'Object::Event'  => 1.2,
         'JSON'           => 0,
         'MIME::Base64'   => 0,
         'Scalar::Util'   => 0,

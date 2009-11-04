@@ -1,6 +1,6 @@
 --- #YAML:1.0
 name:               AnyEvent-Twitter
-version:            0.26
+version:            0.27
 abstract:           Implementation of the Twitter API for AnyEvent
 author:
     - Robin Redeker <elmex@x-paste.de>
@@ -17,7 +17,7 @@ requires:
     Encode:          0
     JSON:            0
     MIME::Base64:    0
-    Object::Event:   0
+    Object::Event:   1.2
     Scalar::Util:    0
     Test::More:      0
     Time::Local:     0
