@@ -1,32 +1,33 @@
---- #YAML:1.0
-name:               AnyEvent-Twitter
-version:            0.27
-abstract:           Implementation of the Twitter API for AnyEvent
+---
+abstract: 'A thin wrapper for Twitter API using OAuth'
 author:
-    - Robin Redeker <elmex@x-paste.de>
-license:            perl
-distribution_type:  module
-configure_requires:
-    ExtUtils::MakeMaker:  0
+  - 'punytan <punytan@gmail.com>'
 build_requires:
-    ExtUtils::MakeMaker:  0
-requires:
-    AnyEvent:        3.5
-    AnyEvent::HTTP:  0
-    common::sense:   0
-    Encode:          0
-    JSON:            0
-    MIME::Base64:    0
-    Object::Event:   1.2
-    Scalar::Util:    0
-    Test::More:      0
-    Time::Local:     0
-    URI::URL:        0
-no_index:
-    directory:
-        - t
-        - inc
-generated_by:       ExtUtils::MakeMaker version 6.55_02
+  ExtUtils::MakeMaker: 6.42
+  Test::More: 0
+configure_requires:
+  ExtUtils::MakeMaker: 6.42
+distribution_type: module
+generated_by: 'Module::Install version 0.95'
+license: perl
 meta-spec:
-    url:      http://module-build.sourceforge.net/META-spec-v1.4.html
-    version:  1.4
+  url: http://module-build.sourceforge.net/META-spec-v1.4.html
+  version: 1.4
+name: AnyEvent-Twitter
+no_index:
+  directory:
+    - inc
+    - t
+    - xt
+requires:
+  AnyEvent: 0
+  AnyEvent::HTTP: 0
+  Digest::SHA: 0
+  JSON: 0
+  Net::OAuth: 0
+  Net::Twitter::Lite: 0
+  perl: 5.8.0
+resources:
+  license: http://dev.perl.org/licenses/
+  repository: git://github.com/punytan/AnyEvent-Twitter.git
+version: 0.51

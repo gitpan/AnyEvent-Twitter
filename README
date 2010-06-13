@@ -1,289 +1,32 @@
-NAME
-    AnyEvent::Twitter - Implementation of the Twitter API for AnyEvent
+This is Perl module AnyEvent::Twitter.
 
-VERSION
-    Version 0.27
+INSTALLATION
 
-SYNOPSIS
-       use AnyEvent::Twitter;
+AnyEvent::Twitter installation is straightforward. If your CPAN shell is set up,
+you should just be able to do
 
-       my $cv = AnyEvent->condvar; # see below about this
+    % cpan AnyEvent::Twitter
 
-       my $twitty =
-          AnyEvent::Twitter->new (
-             username => 'elm3x',
-             password => 'secret123'
-          );
+Download it, unpack it, then build it as per the usual:
 
-       $twitty->reg_cb (
-          error => sub {
-             my ($twitty, $error) = @_;
+    % perl Makefile.PL
+    % make && make test
 
-             warn "Error: $error\n";
-          },
-          statuses_friends => sub {
-             my ($twitty, @statuses) = @_;
+Then install it:
 
-             for (@statuses) {
-                my ($pp_status, $raw_status) = @$_;
-                printf "new friend status: %s: %s\n",
-                      $pp_status->{screen_name},
-                      $pp_status->{text};
-             }
-          },
-       );
+    % make install
 
-       $twitty->receive_statuses_friends;
+DOCUMENTATION
 
-       $twitty->update_status ("I'm bathing in my hot tub!", sub {
-          my ($twitty, $status, $js_status, $error) = @_;
+AnyEvent::Twitter documentation is available as in POD. So you can do:
 
-          if (defined $error) {
-             # ...
-          } else {
-             # ...
-          }
-       });
+    % perldoc AnyEvent::Twitter
 
-       $twitty->start; # important!
+to read the documentation online with your favorite pager.
 
-       $cv->recv; # AnyEvent idiom to start some event loop or wait until
-                  # the condvar is 'sent'
+NOTE
 
-DESCRIPTION
-    This is a lightweight implementation of the Twitter API. It's currently
-    still very limited and only implements the most necessary parts of the
-    API (for inclusion in my chat client).
+The API of this module is different from older version.
+Be careful to upgrade if you are using older version.
 
-    If you are missing something don't hesitate to bug me!
-
-    This module uses AnyEvent::HTTP for communicating with twitter. It
-    currently doesn't use OAuth based authentication but HTTP Basic
-    Authentication, as it is still not deprecated at the time of this
-    writing (July 2009). If it will ever be deprecated I will take care to
-    implement OAuth.
-
-    The AnyEvent::Twitter class inherits the event callback interface from
-    Object::Event.
-
-WEIGHTS AND RATE LIMITING
-    As the Twitter API is heavily rate limited in that kind of way that you
-    only have a few GET requests per hour (~150), this module implements
-    rate limiting. It will dynamically adjust the poll intervals (if you
-    didn't set a fixed poll intervall) to not exceed the requests per hours.
-
-    The "bandwidth" parameter to the "new" method (see below) controls how
-    much of the available requests are used. This is useful if you want to
-    run multiple clients for one twitter account and not have them take away
-    each others request per hours.
-
-    The $weigth parameters to the "receive_..." methods is for prioritizing
-    the requests. It works as follows: Each time a request can be made every
-    "receive_..." 'job' gets his weight added to an internal counter. The
-    'job' with the highest count will be executed.
-
-    With this simple weight system you can say which kind of information you
-    are most interested in. For example giving the statuses of your friends
-    a $weight of 2 and the mentions of your nickname a $weight of 1 will
-    result in polling the statuses of your friends two times more often.
-
-  LOCAL TIME
-    NOTE: It's crucial that your system clock is correctly set. As twitter
-    only reports an absolute time at which the rate limiting is reseted we
-    have to calculate the next poll time based on your clock.
-
-METHODS
-    my $obj = AnyEvent::Twitter->new (%args)
-        Creates a new twitter client object. %args can contain these
-        arguments ("username" and "password" are mandatory):
-
-        username => $username
-            Your twitter username.
-
-        password => $password
-            Your twitter password.
-
-        state => $new_state_struct
-            Initializer for the value given to the "state" method (see
-            below).
-
-        bandwidth => $bandwidth_factor
-            $bandwidth_factor is the amount of "bandwidth" that is consumed
-            by the regular polling. The default value is 0.95. Any value
-            between 0 and 1 is valid.
-
-            If you give a value of 0.5 this AnyEvent::Twitter instance will
-            only use up half of the available requests per hours for the
-            polls.
-
-    $obj->start
-        This method will start requesting the data you are interested in.
-        See also the "receive_..." methods, about how to say what you are
-        interested in.
-
-    $obj->receive_statuses_friends ([$weight])
-        This will enable polling for the statuses of your friends.
-
-        About $weight see the "WEIGHTS AND RATE LIMITING" section.
-
-        Whenever a new status is received the "statuses_friends" event is
-        emitted (see below).
-
-        The "id" of the seen statuses are recorded in a data structure which
-        you may set or retrieve via the "state" method. I recommend caching
-        the state data structure.
-
-    $obj->receive_statuses_mentions ([$weight])
-        This will enable polling for the statuses that mention you.
-
-        About $weight see the "WEIGHTS AND RATE LIMITING" section.
-
-        Whenever a new status is received the "statuses_mentions" event is
-        emitted (see below).
-
-        The "id" of the seen statuses are recorded in a data structure which
-        you may set or retrieve via the "state" method. I recommend caching
-        the state data structure.
-
-    $obj->check_status_length ($status)
-        This method checks whether the string in $status does not exceed the
-        maximum length of a status update.
-
-        If the length is ok a true value is returned. If not, a false value
-        is returned.
-
-    $obj->update_status ($status, $done_cb->($obj, $status, $js, $error))
-        This will post an update of your status to twitter. $status should
-        not be longer than 140 octets, you can check this with the
-        "check_status_length" method (see above).
-
-        When the request is done the $done_cb callback will be called with
-        the $status as second argument if the update was successful and a
-        human readable $error string as fourth argument in case of an error.
-        $js is the JSON response received from the server.
-
-        When the HTTP POST was successful the "status_updated" event will be
-        emitted.
-
-    my $state_struct = $obj->state
-    $obj->state ($new_state_struct)
-        With these methods you can set the internal sequence state. Whenever
-        a special kind of data is retrieved from Twitter the most recent
-        sequence id of the entry is remembered in the hash $state_struct.
-
-        You can use this method to store the state or restore it. This is
-        useful if you have an application that shouldn't forget which
-        entries it already saw.
-
-EVENTS
-    statuses_<statuspath> => @statuses
-        This event is emitted whenever a new status was seen for the
-        "statuspath" which can be one of these:
-
-           friends
-           public    (currently unimplemented)
-           user      (currently unimplemented)
-           mentions
-
-        @statuses contains the new status updates. The order is usually that
-        the newest statuses come first. Each element of @statuses is an
-        array reference containing:
-
-           $status, $raw_status
-
-        $status is a hash reference containing some post processed
-        information about the status update in $raw_status. Most notable is
-        the unescaping of the texts (see below about $raw_status).
-
-        It contains these key/value pairs:
-
-        text => $text
-            This is the text of the status update.
-
-        screen_name => $screen_name
-            This contains the screen name of the user who posted this status
-            update.
-
-        timestamp => $timestamp
-            This contains the creation time of the status as unix timestamp
-            in UTC time.
-
-        $raw_status is the parsed JSON structure of the new status. About
-        the interesting fields please consult
-        <http://apiwiki.twitter.com/Twitter-API-Documentation>.
-
-        Please note that '<' and '>' are encoded as HTML entities '&lt;' and
-        '&gt;', so you will have to decode them yourself.
-
-    next_request_in => $seconds, $remaining_request, $remaining_time
-        This event is emitted when the timer for the next request is
-        started. $seconds are the seconds until the next request is made.
-
-        $remaining_request are the requests you have available within the
-        next $remaining_time seconds.
-
-    error => $error_string
-        Whenever an error happens this event is emitted. $error_string
-        contains a human readable error message.
-
-AUTHOR
-    Robin Redeker, "<elmex@ta-sa.org>"
-
-ACKNOWLEDGEMENTS
-      Nuno Nunes (nfmnunes @ CPAN)     - For initial patch for mentions.
-
-SEE ALSO
-    Object::Event
-
-    <http://apiwiki.twitter.com/Twitter-API-Documentation>
-
-BUGS
-    Please report any bugs or feature requests to "bug-anyevent-twitter at
-    rt.cpan.org", or through the web interface at
-    <http://rt.cpan.org/NoAuth/ReportBug.html?Queue=AnyEvent-Twitter>. I
-    will be notified and then you'll automatically be notified of progress
-    on your bug as I make changes.
-
-SUPPORT
-    You can find documentation for this module with the perldoc command.
-
-        perldoc AnyEvent::Twitter
-
-    You can also look for information at:
-
-    *   IRC: AnyEvent::Twitter IRC Channel
-
-        See the same channel as the AnyEvent::XMPP module:
-
-          IRC Network: http://freenode.net/
-          Server     : chat.freenode.net
-          Channel    : #ae_xmpp
-
-          Feel free to join and ask questions!
-
-    *   Homepage:
-
-        <http://software.schmorp.de/pkg/AnyEvent-Twitter.html>
-
-    *   AnnoCPAN: Annotated CPAN documentation
-
-        <http://annocpan.org/dist/AnyEvent-Twitter>
-
-    *   CPAN Ratings
-
-        <http://cpanratings.perl.org/d/AnyEvent-Twitter>
-
-    *   RT: CPAN's request tracker
-
-        <http://rt.cpan.org/NoAuth/Bugs.html?Dist=AnyEvent-Twitter>
-
-    *   Search CPAN
-
-        <http://search.cpan.org/dist/AnyEvent-Twitter>
-
-COPYRIGHT & LICENSE
-    Copyright 2009 Robin Redeker, all rights reserved.
-
-    This program is free software; you can redistribute it and/or modify it
-    under the same terms as Perl itself.
-
+punytan

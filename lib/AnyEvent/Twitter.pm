@@ -1,680 +1,277 @@
 package AnyEvent::Twitter;
-use common::sense;
-use Carp qw/croak/;
-use AnyEvent;
-use AnyEvent::HTTP;
-use URI::URL;
-use JSON;
-use MIME::Base64;
-use Scalar::Util qw/weaken/;
+use strict;
+use warnings;
+use utf8;
+use 5.008;
 use Encode;
-use Time::Local;
+our $VERSION = '0.51';
 
-use base qw/Object::Event/;
+use Carp;
+use JSON;
+use Net::OAuth;
+use Digest::SHA;
+use AnyEvent::HTTP;
 
-our $VERSION = '0.27';
+$Net::OAuth::PROTOCOL_VERSION = Net::OAuth::PROTOCOL_VERSION_1_0A;
 
-our $DEBUG = 0;
+sub new {
+    my $class = shift;
+    my %args  = @_;
+
+    defined $args{consumer_key}        or croak "consumer_key is needed";
+    defined $args{consumer_secret}     or croak "consumer_secret is needed";
+    defined $args{access_token}        or croak "access_token is needed";
+    defined $args{access_token_secret} or croak "access_token_secret is needed";
+
+    return bless \%args, $class;
+}
+
+sub request {
+    my $self = shift;
+    my $cb   = pop;
+    my %opt  = @_;
+
+    my $url;
+    if (defined $opt{url}) {
+        $url = $opt{url};
+    } elsif (defined $opt{api}) {
+        $url = 'http://api.twitter.com/1/' . $opt{api} . '.json';
+    } else {
+        croak "'api' or 'url' option is required";
+    }
+
+    ref $cb eq 'CODE'    or croak "callback coderef is required";
+    defined $opt{method} or croak "'method' option is required";
+
+    $opt{method} = uc $opt{method};
+    $opt{method} =~ /^(?:GET|POST)$/ or croak "'method' option should be GET or POST";
+
+    my $req = $self->_make_oauth_request(
+        request_url    => $url,
+        request_method => $opt{method},
+        extra_params   => $opt{params},
+    );
+
+    my $req_url;
+    my %req_params;
+    if ($opt{method} eq 'POST') {
+        $req_params{body} = $req->to_post_body;
+        $req_url = $req->normalized_request_url;
+    } else {
+        $req_url = $req->to_url;
+    }
+
+    http_request($opt{method} => $req_url, %req_params, sub {
+        my ($body, $hdr) = @_;
+
+        if ($hdr->{Status} =~ /^2/) {
+            local $@;
+            my $json = eval { decode_json($body) };
+            $cb->($hdr, $json, $@ ? "parse error: $@" : $hdr->{Reason}) ;
+        } else {
+            $cb->($hdr, undef, $hdr->{Reason});
+        }
+    });
+
+    return $self;
+}
+
+sub _make_oauth_request {
+    my $self = shift;
+    my %opt  = @_;
+
+    local $Net::OAuth::SKIP_UTF8_DOUBLE_ENCODE_CHECK = 1;
+
+    my $req = Net::OAuth->request('protected resource')->new(
+        version          => '1.0',
+        consumer_key     => $self->{consumer_key},
+        consumer_secret  => $self->{consumer_secret},
+        token            => $self->{access_token},
+        token_secret     => $self->{access_token_secret},
+        signature_method => 'HMAC-SHA1',
+        timestamp        => time,
+        nonce            => Digest::SHA::sha1_base64(time . $$ . rand),
+        %opt,
+    );
+    $req->sign;
+
+    return $req;
+}
+
+1;
+__END__
+
+=encoding utf-8
 
 =head1 NAME
 
-AnyEvent::Twitter - Implementation of the Twitter API for AnyEvent
-
-=head1 VERSION
-
-Version 0.27
+AnyEvent::Twitter - A thin wrapper for Twitter API using OAuth
 
 =head1 SYNOPSIS
 
-   use AnyEvent::Twitter;
+    use utf8;
+    use Data::Dumper;
+    use AnyEvent;
+    use AnyEvent::Twitter;
 
-   my $cv = AnyEvent->condvar; # see below about this
+    my $ua = AnyEvent::Twitter->new(
+        consumer_key        => 'consumer_key',
+        consumer_secret     => 'consumer_secret',
+        access_token        => 'access_token',
+        access_token_secret => 'access_token_secret',
+    );
 
-   my $twitty =
-      AnyEvent::Twitter->new (
-         username => 'elm3x',
-         password => 'secret123'
-      );
+    # if you use eg/gen_token.pl, simply as:
+    #
+    # use JSON;
+    # use Perl6::Slurp;
+    # my $json_text = slurp 'config.json';
+    # my $config = decode_json($json_text);
+    # my $ua = AnyEvent::Twitter->new(%$config);
 
-   $twitty->reg_cb (
-      error => sub {
-         my ($twitty, $error) = @_;
+    my $cv = AE::cv;
 
-         warn "Error: $error\n";
-      },
-      statuses_friends => sub {
-         my ($twitty, @statuses) = @_;
+    $cv->begin;
+    $ua->request(
+        api    => 'account/verify_credentials',
+        method => 'GET',
+        sub {
+            my ($hdr, $res, $reason) = @_;
 
-         for (@statuses) {
-            my ($pp_status, $raw_status) = @$_;
-            printf "new friend status: %s: %s\n",
-                  $pp_status->{screen_name},
-                  $pp_status->{text};
-         }
-      },
-   );
+            unless ($res) {
+                print $reason, "\n";
+            }
+            else {
+                print "ratelimit-remaining : ", $hdr->{'x-ratelimit-remaining'}, "\n",
+                      "x-ratelimit-reset   : ", $hdr->{'x-ratelimit-reset'}, "\n",
+                      "screen_name         : ", $res->{screen_name}, "\n";
+            }
+            $cv->end;
+        }
+    );
 
-   $twitty->receive_statuses_friends;
+    $cv->begin;
+    $ua->request(
+        api => 'statuses/update',
+        method => 'POST',
+        params => {
+            status => '(#`ω´)クポー クポー',
+        },
+        sub {
+            print Dumper \@_;
+            $cv->end;
+        }
+    );
 
-   $twitty->update_status ("I'm bathing in my hot tub!", sub {
-      my ($twitty, $status, $js_status, $error) = @_;
-
-      if (defined $error) {
-         # ...
-      } else {
-         # ...
-      }
-   });
-
-   $twitty->start; # important!
-
-   $cv->recv; # AnyEvent idiom to start some event loop or wait until
-              # the condvar is 'sent'
+    $cv->begin;
+    $ua->request(
+        url => 'http://api.twitter.com/1/statuses/update.json',
+        method => 'POST',
+        params => {
+            status => '(#`ω´)クポー クポー',
+        },
+        sub {
+            print Dumper \@_;
+            $cv->end;
+        }
+    );
+    $cv->recv;
 
 =head1 DESCRIPTION
 
-This is a lightweight implementation of the Twitter API. It's currently
-still very limited and only implements the most necessary parts of the API
-(for inclusion in my chat client).
+AnyEvent::Twitter is a very thin wrapper for Twitter API using OAuth.
 
-If you are missing something don't hesitate to bug me!
+NOTE :
 
-This module uses L<AnyEvent::HTTP> for communicating with twitter. It currently
-doesn't use OAuth based authentication but HTTP Basic Authentication, as it is
-still not deprecated at the time of this writing (July 2009). If it will ever
-be deprecated I will take care to implement OAuth.
+With the removal of basic authentication, the API of this module is different from older version.
 
-The L<AnyEvent::Twitter> class inherits the event callback interface from
-L<Object::Event>.
-
-=head1 WEIGHTS AND RATE LIMITING
-
-As the Twitter API is heavily rate limited in that kind of way that
-you only have a few GET requests per hour (~150), this module implements
-rate limiting. It will dynamically adjust the poll intervals (if you didn't
-set a fixed poll intervall) to not exceed the requests per hours.
-
-The C<bandwidth> parameter to the C<new> method (see below) controls how much
-of the available requests are used. This is useful if you want to run multiple
-clients for one twitter account and not have them take away each others request
-per hours.
-
-The C<$weigth> parameters to the C<receive_...> methods is for prioritizing
-the requests. It works as follows: Each time a request can be made
-every C<receive_...> 'job' gets his weight added to an internal counter. The
-'job' with the highest count will be executed.
-
-With this simple weight system you can say which kind of information you are
-most interested in. For example giving the statuses of your friends a
-C<$weight> of 2 and the mentions of your nickname a C<$weight> of 1 will result
-in polling the statuses of your friends two times more often.
-
-=head2 LOCAL TIME
-
-B<NOTE:> It's crucial that your system clock is correctly set. As twitter
-only reports an absolute time at which the rate limiting is reseted we
-have to calculate the next poll time based on your clock.
+Be careful to upgrade if you are using older version.
 
 =head1 METHODS
 
-=over 4
+=head2 new
 
-=item my $obj = AnyEvent::Twitter->new (%args)
-
-Creates a new twitter client object. C<%args> can contain these
-arguments (C<username> and C<password> are mandatory):
+All arguments are required.
+If you don't know how to obtain these parameters, take a look at eg/gen_token.pl and run it.
 
 =over 4
 
-=item username => $username
+=item consumer_key
 
-Your twitter username.
+=item consumer_secret
 
-=item password => $password
+=item access_token
 
-Your twitter password.
-
-=item state => $new_state_struct
-
-Initializer for the value given to the C<state> method (see below).
-
-=item bandwidth => $bandwidth_factor
-
-C<$bandwidth_factor> is the amount of "bandwidth" that is consumed
-by the regular polling. The default value is C<0.95>. Any value
-between 0 and 1 is valid.
-
-If you give a value of C<0.5> this L<AnyEvent::Twitter> instance will
-only use up half of the available requests per hours for the polls.
+=item access_token_secret
 
 =back
 
-=cut
+=head2 request
 
-sub new {
-   my $this  = shift;
-   my $class = ref ($this) || $this;
-   my $self  = $class->SUPER::new (
-      bandwidth        => 0.95,
-      @_,
-   );
-
-   if ($self->{bandwidth} == 0) {
-      croak "zero 'bandwidth' is an invalid value!\n";
-   }
-
-   unless (defined $self->{username}) {
-      croak "no 'username' given to AnyEvent::Twitter\n";
-   }
-
-   unless (defined $self->{password}) {
-      croak "no 'password' given to AnyEvent::Twitter\n";
-   }
-
-   $self->{state} ||= {};
-
-   $self->{base_url} = 'http://www.twitter.com'
-      unless defined $self->{base_url};
-
-   return $self
-}
-
-sub _schedule_next_tick {
-   my ($self, $last_req_hdrs) = @_;
-
-   unless (defined $last_req_hdrs) {
-      $self->_tick;
-      return;
-   }
-
-   my $next_tick = 0;
-   my $remaining_requests = $last_req_hdrs->{'x-ratelimit-remaining'};
-   my $remaining_time     = $last_req_hdrs->{'x-ratelimit-reset'} - time;
-
-   if (defined $self->{interval}) {
-      $next_tick = $self->{interval};
-
-   } elsif ($last_req_hdrs->{Status} eq '400'
-            && $last_req_hdrs->{'x-ratelimit-reset'} > 0) {
-      # probably not neccesary this special case, but better be safe...
-      $next_tick = $remaining_time;
-
-   } elsif ($last_req_hdrs->{'x-ratelimit-reset'} > 0 # some basic sanity checks
-            && $last_req_hdrs->{'x-ratelimit-limit'} != 0) {
-
-      warn "REMAINING TIME: $remaining_time, "
-           . "remaing reqs: $remaining_requests\n"
-         if $DEBUG;
-
-      if ($remaining_requests <= 0) {
-         $next_tick = $remaining_time;
-
-      } else {
-         $next_tick = $remaining_time
-                      / ($remaining_requests * $self->{bandwidth});
-      }
-   }
-
-   warn "NEXT TICK IN $next_tick seconds\n" if $DEBUG;
-
-   weaken $self;
-   $self->{_tick_timer} =
-      AnyEvent->timer (after => $next_tick, cb => sub {
-         delete $self->{_tick_timer};
-         $self->_tick;
-      });
-
-   $self->next_request_in ($next_tick, $remaining_requests, $remaining_time);
-}
-
-sub _tick {
-   my ($self) = @_;
-
-   my $max_task;
-   for (keys %{$self->{schedule}}) {
-      my $task = $self->{schedule}->{$_};
-      $task->{wait} += $task->{weight};
-
-      warn "TASK: $_ => $task->{wait} | $task->{weight}\n" if $DEBUG;
-
-      $max_task = $task
-         if not (defined $max_task)
-            || $max_task->{wait} <= $task->{wait};
-
-      warn "MAXTASK: $max_task->{wait}\n" if $DEBUG;
-   }
-
-   return unless $max_task;
-
-   weaken $self;
-   $max_task->{request}->(
-      sub { $self->_schedule_next_tick ($_[0]) }, $max_task);
-   $max_task->{wait} = 0;
-}
-
-=item $obj->start
-
-This method will start requesting the data you are interested in.
-See also the C<receive_...> methods, about how to say what you are
-interested in.
-
-=cut
-
-sub start {
-   my ($self) = @_;
-
-   $self->_tick;
-}
-
-sub _get_basic_auth {
-   my ($self) = @_;
-
-   'Authorization' =>
-      "Basic " . encode_base64 (join ':', $self->{username}, $self->{password});
-}
-
-sub _unescape_madness {
-   my ($str) = @_;
-   $str =~ s/&gt;/>/g;
-   $str =~ s/&lt;/</g;
-   $str
-}
-
-our %MONTHS = (
-   Jan => 0,
-   Feb => 1,
-   Mar => 2,
-   Apr => 3,
-   May => 4,
-   Jun => 5,
-   Jul => 6,
-   Aug => 7,
-   Sep => 8,
-   Oct => 9,
-   Nov => 10,
-   Dec => 11,
-);
-
-sub _twitter_time_to_timestamp {
-   my ($tt) = @_;
-
-   # Sat Jan 24 22:14:29 +0000 2009
-   $tt =~ /^\S+\s+(\S+)\s+(\d+)\s+(\d+):(\d+):(\d+)\s+([+-]?)(\d{2})(\d{2})\s+(\d+)$/
-      or return undef;
-
-   my ($month, $mday, $h, $m, $s, $offs_pref, $offs_h, $offs_min, $year) =
-      ($1, $2, $3, $4, $5, $6, $7, $8, $9);
-
-   my $ts = Time::Local::timegm ($s, $m, $h, $mday, $MONTHS{$month}, $year - 1900);
-
-   my $offs_sec = $offs_h * 3600 + $offs_min * 60;
-
-   $ts += ($offs_pref eq '-' ? -1 : 1) * $offs_sec;
-
-   $ts
-}
-
-sub _analze_statuses {
-   my ($self, $category, $data) = @_;
-
-   my $st = ($self->{state}->{statuses}->{$category} ||= {});
-   my $js;
-
-   eval {
-       $js = decode_json ($data);
-   };
-   if ($@) {
-      $self->error ("error while parsing statuses for $category: $@");
-   }
-
-   my @statuses = map {
-      $st->{id} = $_->{id} if $_->{id} > $st->{id};
-      my $pps = {};
-
-      $pps->{text}        = _unescape_madness $_->{text};
-      $pps->{screen_name} = _unescape_madness $_->{user}->{screen_name};
-      $pps->{timestamp}   = _twitter_time_to_timestamp $_->{created_at};
-
-      [$pps, $_]
-   } @{$js || []};
-
-   $self->event ('statuses_' . $category, @statuses);
-}
-
-sub _fetch_status_update {
-   my ($self, $statuses_cat, $next_cb, $task) = @_;
-
-   my $category =
-      $statuses_cat =~ /^(.*?)_timeline$/
-         ? $1
-         : $statuses_cat;
-
-   my $st = ($self->{state}->{statuses}->{$category} ||= {});
-
-   my $url  = URI::URL->new ($self->{base_url});
-   $url->path_segments ('statuses', $statuses_cat . ".json");
-
-   if (defined $st->{id}) {
-      $url->query_form (since_id => $st->{id});
-
-   } else {
-      $url->query_form (count => 200); # fetch as many as possible
-   }
-
-
-   my $hdrs = { $self->_get_basic_auth };
-
-   weaken $self;
-   $self->{http_get}->{$category} =
-      http_get $url->as_string, headers => $hdrs, sub {
-         my ($data, $hdr) = @_;
-
-         delete $self->{http_get}->{$category};
-
-         #d# warn "FOO: " . JSON->new->pretty->encode ($hdr) . "\n";
-
-         if ($hdr->{Status} =~ /^2/) {
-            $self->_analze_statuses ($category, $data);
-
-         } else {
-            $self->error ("error while fetching statuses for $category: "
-                          . "$hdr->{Status} $hdr->{Reason}");
-         }
-
-         $next_cb->($hdr);
-      };
-}
-
-=item $obj->receive_statuses_friends ([$weight])
-
-This will enable polling for the statuses of your friends.
-
-About C<$weight> see the L<WEIGHTS AND RATE LIMITING> section.
-
-Whenever a new status is received the C<statuses_friends> event is emitted
-(see below).
-
-The C<id> of the seen statuses are recorded in a data structure which
-you may set or retrieve via the C<state> method. I recommend caching the
-state data structure.
-
-=cut
-
-sub receive_statuses_friends {
-   my ($self, $weight) = @_;
-
-   weaken $self;
-   $self->{schedule}->{statuses_friends} = {
-      wait    => 0,
-      weight  => $weight || 1,
-      request => sub { $self->_fetch_status_update ('friends_timeline', @_) },
-   };
-}
-
-=item $obj->receive_statuses_mentions ([$weight])
-
-This will enable polling for the statuses that mention you.
-
-About C<$weight> see the L<WEIGHTS AND RATE LIMITING> section.
-
-Whenever a new status is received the C<statuses_mentions> event is emitted
-(see below).
-
-The C<id> of the seen statuses are recorded in a data structure which
-you may set or retrieve via the C<state> method. I recommend caching the
-state data structure.
-
-=cut
-
-sub receive_statuses_mentions {
-   my ($self, $weight) = @_;
-
-   weaken $self;
-   $self->{schedule}->{statuses_mentions} = {
-      wait    => 0,
-      weight  => $weight || 1,
-      request => sub { $self->_fetch_status_update ('mentions', @_) },
-   };
-}
-
-sub _encode_status {
-   encode ('utf-8', $_[0])
-}
-
-=item $obj->check_status_length ($status)
-
-This method checks whether the string in C<$status> does not
-exceed the maximum length of a status update.
-
-If the length is ok a true value is returned.
-If not, a false value is returned.
-
-=cut
-
-sub check_status_length {
-   my ($self, $status) = @_;
-
-   my $status_e = _encode_status $status;
-
-   length ($status_e) <= 140;
-}
-
-=item $obj->update_status ($status, $done_cb->($obj, $status, $js, $error))
-
-This will post an update of your status to twitter. C<$status> should not be
-longer than 140 octets, you can check this with the C<check_status_length>
-method (see above).
-
-When the request is done the C<$done_cb> callback will be called with the
-C<$status> as second argument if the update was successful and a human readable
-C<$error> string as fourth argument in case of an error.  C<$js> is the JSON
-response received from the server.
-
-When the HTTP POST was successful the C<status_updated> event will be emitted.
-
-=cut
-
-sub update_status {
-   my ($self, $status, $done_cb) = @_;
-
-   my $status_e = _encode_status $status;
-
-   my $url = URI::URL->new ($self->{base_url});
-   $url->path_segments ('statuses', "update.json");
-   $url->query_form (status => $status_e);
-
-   my $hdrs = { $self->_get_basic_auth };
-
-   weaken $self;
-   $self->{http_posts}->{status} =
-      http_post $url->as_string, '', headers => $hdrs, sub {
-         my ($data, $hdr) = @_;
-         delete $self->{http_posts}->{status};
-
-         if ($hdr->{Status} =~ /^2/) {
-            my $js;
-            eval {
-               $js = decode_json ($data);
-            };
-            if ($@) {
-               $done_cb->($self, undef, undef,
-                  "error when receiving your status update "
-                  . "and parsing it's JSON: $@");
-               return;
-            }
-
-            $done_cb->($self, $status, $js);
-
-         } else {
-            $done_cb->($self, undef, undef,
-                       "error while updating your status: "
-                       . "$hdr->{Status} $hdr->{Reason}");
-         }
-      };
-}
-
-
-=item my $state_struct = $obj->state
-
-=item $obj->state ($new_state_struct)
-
-With these methods you can set the internal sequence state. Whenever
-a special kind of data is retrieved from Twitter the most recent
-sequence id of the entry is remembered in the hash C<$state_struct>.
-
-You can use this method to store the state or restore it. This is useful
-if you have an application that shouldn't forget which entries it already saw.
-
-=cut
-
-sub state { defined $_[1] ? $_[0]->{state} = $_[1] : $_[0]->{state} }
-
-=back
-
-=head1 EVENTS
+These parameters are required.
 
 =over 4
 
-=item statuses_<statuspath> => @statuses
+=item api or url
 
-This event is emitted whenever a new status was seen for the C<statuspath>
-which can be one of these:
+The api parameter is a shortcut option.
 
-   friends
-   public    (currently unimplemented)
-   user      (currently unimplemented)
-   mentions
+If you want to specify the API url, the url parameter is good for you. The format should be 'json'.
 
-C<@statuses> contains the new status updates. The order is usually that the
-newest statuses come first.  Each element of C<@statuses> is an array reference
-containing:
+The api parameter will be internally processed as:
 
-   $status, $raw_status
+    $url = 'http://api.twitter.com/1/' . $opt{api} . '.json';
 
-C<$status> is a hash reference containing some post processed information
-about the status update in C<$raw_status>. Most notable is the unescaping
-of the texts (see below about C<$raw_status>).
+You can check the api option at L<Twitter API Wiki|http://apiwiki.twitter.com/Twitter-API-Documentation>
 
-It contains these key/value pairs:
+=item method
 
-=over 4
+Investigate the HTTP method of Twitter API that you want to use. Then specify it. GET/POST methods are allowed.
 
-=item text => $text
+=item callback
 
-This is the text of the status update.
+This module is AnyEvent::http_request style, so you have to pass the coderef callback.
 
-=item screen_name => $screen_name
+$hdr, $response and $reason will be returned. If something is wrong with the response, $response will be undef. So you can check the value like below.
 
-This contains the screen name of the user who posted this status update.
+    sub {
+        my ($hdr, $res, $reason) = @_;
 
-=item timestamp => $timestamp
-
-This contains the creation time of the status as unix timestamp
-in UTC time.
+        unless ($res) {
+            print $reason, "\n";
+        }
+        else {
+            print $res->{screen_name}, "\n";
+        }
+    }
 
 =back
 
-C<$raw_status> is the parsed JSON structure of the new status. About the
-interesting fields please consult
-L<http://apiwiki.twitter.com/Twitter-API-Documentation>.
+=head1 CONTRIBUTORS
 
-Please note that '<' and '>' are encoded as HTML entities '&lt;' and '&gt;',
-so you will have to decode them yourself.
+=over 4
 
-=item next_request_in => $seconds, $remaining_request, $remaining_time
+=item ramusara
 
-This event is emitted when the timer for the next request is started.
-C<$seconds> are the seconds until the next request is made.
+He gave me plenty of test code.
 
-C<$remaining_request> are the requests you have available within the next
-C<$remaining_time> seconds.
+=item Hideki Yamamura
 
-=cut
-
-sub next_request_in : event_cb { }
-
-=item error => $error_string
-
-Whenever an error happens this event is emitted. C<$error_string> contains
-a human readable error message.
-
-=cut
-
-sub error : event_cb { }
+He cleaned my code up.
 
 =back
 
 =head1 AUTHOR
 
-Robin Redeker, C<< <elmex@ta-sa.org> >>
-
-=head1 ACKNOWLEDGEMENTS
-
-  Nuno Nunes (nfmnunes @ CPAN)     - For initial patch for mentions.
+punytan E<lt>punytan@gmail.comE<gt>
 
 =head1 SEE ALSO
 
-L<Object::Event>
+L<AnyEvent::HTTP>, L<Net::OAuth>
 
-L<http://apiwiki.twitter.com/Twitter-API-Documentation>
+=head1 LICENSE
 
-=head1 BUGS
-
-Please report any bugs or feature requests to
-C<bug-anyevent-twitter at rt.cpan.org>, or through the web interface at
-L<http://rt.cpan.org/NoAuth/ReportBug.html?Queue=AnyEvent-Twitter>.
-I will be notified and then you'll automatically be notified of progress on
-your bug as I make changes.
-
-=head1 SUPPORT
-
-You can find documentation for this module with the perldoc command.
-
-    perldoc AnyEvent::Twitter
-
-You can also look for information at:
-
-=over 4
-
-=item * IRC: AnyEvent::Twitter IRC Channel
-
-See the same channel as the L<AnyEvent::XMPP> module:
-
-  IRC Network: http://freenode.net/
-  Server     : chat.freenode.net
-  Channel    : #ae_xmpp
-
-  Feel free to join and ask questions!
-
-=item * Homepage:
-
-L<http://software.schmorp.de/pkg/AnyEvent-Twitter.html>
-
-=item * AnnoCPAN: Annotated CPAN documentation
-
-L<http://annocpan.org/dist/AnyEvent-Twitter>
-
-=item * CPAN Ratings
-
-L<http://cpanratings.perl.org/d/AnyEvent-Twitter>
-
-=item * RT: CPAN's request tracker
-
-L<http://rt.cpan.org/NoAuth/Bugs.html?Dist=AnyEvent-Twitter>
-
-=item * Search CPAN
-
-L<http://search.cpan.org/dist/AnyEvent-Twitter>
-
-=back
-
-=head1 COPYRIGHT & LICENSE
-
-Copyright 2009 Robin Redeker, all rights reserved.
-
-This program is free software; you can redistribute it and/or modify it
-under the same terms as Perl itself.
+This library is free software; you can redistribute it and/or modify
+it under the same terms as Perl itself.
 
 =cut
-
-1;
