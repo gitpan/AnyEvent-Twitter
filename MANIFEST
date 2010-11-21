@@ -19,7 +19,11 @@ MANIFEST			This list of files
 META.yml
 README
 t/00_compile.t
+t/01_new.t
 xt/01_podspell.t
 xt/02_perlcritic.t
 xt/03_pod.t
+xt/04_request.t
+xt/05_get.t
+xt/06_post.t
 xt/perlcriticrc
