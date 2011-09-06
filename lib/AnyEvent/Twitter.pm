@@ -3,153 +3,210 @@ use strict;
 use warnings;
 use utf8;
 use 5.008;
-use Encode;
-our $VERSION = '0.53';
+our $VERSION = '0.62';
 
 use Carp;
 use JSON;
-use Net::OAuth;
+use URI;
+use URI::Escape;
 use Digest::SHA;
 use AnyEvent::HTTP;
 
+use Net::OAuth;
+use Net::OAuth::ProtectedResourceRequest;
+use Net::OAuth::RequestTokenRequest;
+use Net::OAuth::AccessTokenRequest;
+
 $Net::OAuth::PROTOCOL_VERSION = Net::OAuth::PROTOCOL_VERSION_1_0A;
 
+our %PATH = (
+    site          => 'https://twitter.com/',
+    request_token => 'https://api.twitter.com/oauth/request_token',
+    authorize     => 'https://api.twitter.com/oauth/authorize',
+    access_token  => 'https://api.twitter.com/oauth/access_token',
+    authenticate  => 'https://api.twitter.com/oauth/authenticate',
+);
+
 sub new {
-    my $class = shift;
-    my %args  = @_;
+    my ($class, %args) = @_;
 
-    if (defined $args{token}) {
-        $args{access_token} = $args{token};
+    $args{access_token}        ||= $args{token};
+    $args{access_token_secret} ||= $args{token_secret};
+
+    my @required = qw(access_token access_token_secret consumer_key consumer_secret);
+    for my $item (@required) {
+         defined $args{$item} or Carp::croak "$item is required";
     }
 
-    if (defined $args{token_secret}) {
-        $args{access_token_secret} = $args{token_secret};
-    }
-
-    defined $args{consumer_key}        or croak "consumer_key is needed";
-    defined $args{consumer_secret}     or croak "consumer_secret is needed";
-    defined $args{access_token}        or croak "access_token is needed";
-    defined $args{access_token_secret} or croak "access_token_secret is needed";
-
-    return bless \%args, $class;
+    return bless { %args }, $class;
 }
 
 sub get {
-    my $self = shift;
-    my $api  = shift;
-    my $cb   = pop;
-    my $params = shift;
+    my $cb = pop;
+    my ($self, $endpoint, $params) = @_;
 
-    if (not defined $params) {
-        $params = {};
-    } elsif (ref $params ne 'HASH') {
-        croak "parameters must be hashref.";
-    }
-
-    my @target;
-    if ($api =~ /^http/) {
-        if ($api =~ /.json$/) {
-            push @target, 'url', $api;
-        } else {
-            croak "url must end with '.json'. The argument is $api";
-        }
-    } else {
-        push @target, 'api', $api;
-    }
-
-    $self->request(@target, method => 'GET', params => $params, $cb);
+    my $type = $endpoint =~ /^http.+\.json$/ ? 'url' : 'api';
+    $self->request($type => $endpoint, method => 'GET', params => $params, $cb);
 
     return $self;
 }
 
 sub post {
-    my $self = shift;
-    my ($api, $params, $cb) = @_;
+    my ($self, $endpoint, $params, $cb) = @_;
 
-    ref $params eq 'HASH' or croak "parameters must be hashref.";
-
-    my @target;
-    if ($api =~ /^http.+\.json$/) {
-        push @target, 'url', $api;
-    } else {
-        push @target, 'api', $api;
-    }
-
-    $self->request(@target, method => 'POST', params => $params, $cb);
+    my $type = $endpoint =~ /^http.+\.json$/ ? 'url' : 'api';
+    $self->request($type => $endpoint, method => 'POST', params => $params, $cb);
 
     return $self;
 }
 
 sub request {
-    my $self = shift;
-    my $cb   = pop;
-    my %opt  = @_;
+    my $cb = pop;
+    my ($self, %opt) = @_;
 
-    my $url;
-    if (defined $opt{url}) {
-        $url = $opt{url};
-    } elsif (defined $opt{api}) {
-        $url = 'http://api.twitter.com/1/' . $opt{api} . '.json';
-    } else {
-        croak "'api' or 'url' option is required";
-    }
+    ($opt{api} || $opt{url})
+        or Carp::croak "'api' or 'url' option is required";
 
-    ref $cb eq 'CODE'    or croak "callback coderef is required";
-    defined $opt{method} or croak "'method' option is required";
+    my $url = $opt{url} || 'http://api.twitter.com/1/' . $opt{api} . '.json';
+
+    ref $cb eq 'CODE'
+        or Carp::croak "callback coderef is required";
+
+    $opt{params} ||= {};
+    ref $opt{params} eq 'HASH'
+        or Carp::croak "parameters must be hashref.";
 
     $opt{method} = uc $opt{method};
-    $opt{method} =~ /^(?:GET|POST)$/ or croak "'method' option should be GET or POST";
+    $opt{method} =~ /^(?:GET|POST)$/
+        or Carp::croak "'method' option should be GET or POST";
 
     my $req = $self->_make_oauth_request(
-        request_url    => $url,
-        request_method => $opt{method},
-        extra_params   => $opt{params},
+        class => 'Net::OAuth::ProtectedResourceRequest',
+        request_url     => $url,
+        request_method  => $opt{method},
+        extra_params    => $opt{params},
+        consumer_key    => $self->{consumer_key},
+        consumer_secret => $self->{consumer_secret},
+        token           => $self->{access_token},
+        token_secret    => $self->{access_token_secret},
     );
 
-    my $req_url;
     my %req_params;
     if ($opt{method} eq 'POST') {
+        $url = $req->normalized_request_url;
         $req_params{body} = $req->to_post_body;
-        $req_url = $req->normalized_request_url;
     } else {
-        $req_url = $req->to_url;
+        $url = $req->to_url;
     }
 
-    http_request($opt{method} => $req_url, %req_params, sub {
+    AnyEvent::HTTP::http_request $opt{method} => $url, %req_params, sub {
         my ($body, $hdr) = @_;
 
         if ($hdr->{Status} =~ /^2/) {
             local $@;
-            my $json = eval { decode_json($body) };
-            $cb->($hdr, $json, $@ ? "parse error: $@" : $hdr->{Reason}) ;
+            my $json = eval { JSON::decode_json($body) };
+            $cb->($hdr, $json, $@ ? "parse error: $@" : $hdr->{Reason});
         } else {
             $cb->($hdr, undef, $hdr->{Reason});
         }
-    });
+    };
 
     return $self;
 }
 
 sub _make_oauth_request {
-    my $self = shift;
-    my %opt  = @_;
+    my $self  = shift;
+    my %opt   = @_;
+    my $class = delete $opt{class};
 
     local $Net::OAuth::SKIP_UTF8_DOUBLE_ENCODE_CHECK = 1;
-
-    my $req = Net::OAuth->request('protected resource')->new(
-        version          => '1.0',
-        consumer_key     => $self->{consumer_key},
-        consumer_secret  => $self->{consumer_secret},
-        token            => $self->{access_token},
-        token_secret     => $self->{access_token_secret},
+    my $req = $class->new(
+        version   => '1.0',
+        timestamp => time,
+        nonce     => Digest::SHA::sha1_base64(time . $$ . rand),
         signature_method => 'HMAC-SHA1',
-        timestamp        => time,
-        nonce            => Digest::SHA::sha1_base64(time . $$ . rand),
         %opt,
     );
     $req->sign;
 
     return $req;
+}
+
+sub get_request_token {
+    my ($class, %args) = @_;
+
+    my @required = qw(consumer_key consumer_secret callback_url);
+    for my $item (@required) {
+        defined $args{$item} or Carp::croak "$item is required";
+    }
+
+    ref $args{cb} eq 'CODE'
+        or Carp::croak "cb must be callback coderef";
+
+    $args{auth} ||= 'authorize';
+
+    my $req = __PACKAGE__->_make_oauth_request(
+        class => 'Net::OAuth::RequestTokenRequest',
+        request_method  => 'GET',
+        request_url     => $PATH{request_token},
+        consumer_key    => $args{consumer_key},
+        consumer_secret => $args{consumer_secret},
+        callback        => $args{callback_url},
+    );
+
+    AnyEvent::HTTP::http_request GET => $req->to_url, sub {
+        my ($body, $header) = @_;
+        my %token = __PACKAGE__->_parse_response($body);
+        my $location = URI->new($PATH{ $args{auth} });
+        $location->query_form(%token);
+
+        $args{cb}->($location->as_string, \%token, $body, $header);
+    };
+}
+
+sub get_access_token {
+    my ($class, %args) = @_;
+
+    my @required = qw(
+        consumer_key consumer_secret
+        oauth_token  oauth_token_secret oauth_verifier
+    );
+
+    for my $item (@required) {
+        defined $args{$item} or Carp::croak "$item is required";
+    }
+
+    ref $args{cb} eq 'CODE'
+        or Carp::croak "cb must be callback coderef";
+
+    my $req = __PACKAGE__->_make_oauth_request(
+        class => 'Net::OAuth::AccessTokenRequest',
+        request_method  => 'GET',
+        request_url     => $PATH{access_token},
+        consumer_key    => $args{consumer_key},
+        consumer_secret => $args{consumer_secret},
+        token           => $args{oauth_token},
+        token_secret    => $args{oauth_token_secret},
+        verifier        => $args{oauth_verifier},
+    );
+
+    AnyEvent::HTTP::http_request GET => $req->to_url, sub {
+        my ($body, $header) = @_;
+        my %response = __PACKAGE__->_parse_response($body);
+        $args{cb}->(\%response, $body, $header);
+    };
+}
+
+sub _parse_response {
+    my ($class, $body) = @_;
+
+    my %query;
+    for my $pair (split /&/, $body) {
+        my ($key, $value) = split /=/, $pair;
+        $query{$key} = URI::Escape::uri_unescape($value);
+    }
+
+    return %query;
 }
 
 1;
@@ -169,27 +226,25 @@ AnyEvent::Twitter - A thin wrapper for Twitter API using OAuth
     use AnyEvent::Twitter;
 
     my $ua = AnyEvent::Twitter->new(
-        consumer_key        => 'consumer_key',
-        consumer_secret     => 'consumer_secret',
-        access_token        => 'access_token',
-        access_token_secret => 'access_token_secret',
-    );
-
-    # or
-
-    my $ua = AnyEvent::Twitter->new(
         consumer_key    => 'consumer_key',
         consumer_secret => 'consumer_secret',
         token           => 'access_token',
         token_secret    => 'access_token_secret',
     );
 
+    # or
+
+    my $ua = AnyEvent::Twitter->new(
+        consumer_key        => 'consumer_key',
+        consumer_secret     => 'consumer_secret',
+        access_token        => 'access_token',
+        access_token_secret => 'access_token_secret',
+    );
+
     # or, if you use eg/gen_token.pl, you can write simply as:
 
-    use JSON;
-    use Perl6::Slurp;
     my $json_text = slurp 'config.json';
-    my $config    = decode_json($json_text);
+    my $config    = JSON::decode_json($json_text);
     my $ua = AnyEvent::Twitter->new(%$config);
 
     my $cv = AE::cv;
@@ -233,12 +288,12 @@ AnyEvent::Twitter - A thin wrapper for Twitter API using OAuth
         sub {
             my ($hdr, $res, $reason) = @_;
 
-            unless ($res) {
-                print $reason, "\n";
-            } else {
+            if ($res) {
                 print "ratelimit-remaining : ", $hdr->{'x-ratelimit-remaining'}, "\n",
                       "x-ratelimit-reset   : ", $hdr->{'x-ratelimit-reset'}, "\n",
                       "screen_name         : ", $res->{screen_name}, "\n";
+            } else {
+                say $reason;
             }
             $cv->end;
         }
@@ -281,13 +336,13 @@ If you don't know how to obtain these parameters, take a look at eg/gen_token.pl
 
 =over 4
 
-=item consumer_key
+=item C<consumer_key>
 
-=item consumer_secret
+=item C<consumer_secret>
 
-=item access_token (or token)
+=item C<access_token> (or C<token>)
 
-=item access_token_secret (or token_secret)
+=item C<access_token_secret> (or C<token_secret>)
 
 =back
 
@@ -295,13 +350,13 @@ If you don't know how to obtain these parameters, take a look at eg/gen_token.pl
 
 =over 4
 
-=item $ua->get($api, sub {})
+=item C<< $ua->get($api, sub {}) >>
 
-=item $ua->get($api, \%params, sub {})
+=item C<< $ua->get($api, \%params, sub {}) >>
 
-=item $ua->get($url, sub {})
+=item C<< $ua->get($url, sub {}) >>
 
-=item $ua->get($url, \%params, sub {})
+=item C<< $ua->get($url, \%params, sub {}) >>
 
 =back
 
@@ -309,9 +364,9 @@ If you don't know how to obtain these parameters, take a look at eg/gen_token.pl
 
 =over 4
 
-=item $ua->post($api, \%params, sub {})
+=item C<< $ua->post($api, \%params, sub {}) >>
 
-=item $ua->post($url, \%params, sub {})
+=item C<< $ua->post($url, \%params, sub {}) >>
 
 =back
 
@@ -321,7 +376,7 @@ These parameters are required.
 
 =over 4
 
-=item api or url
+=item C<api> or C<url>
 
 The C<api> parameter is a shortcut option.
 
@@ -331,12 +386,12 @@ The C<api> parameter will be internally processed as:
 
     $url = 'http://api.twitter.com/1/' . $opt{api} . '.json';
 
-You can check the C<api> option at L<API Documentation|http://dev.twitter.com/doc>
+You can check available C<api>s at L<API Documentation|https://dev.twitter.com/docs/api>
 
-=item method and params
+=item C<method> and C<params>
 
 Investigate the HTTP method and required parameters of Twitter API that you want to use.
-Then specify it. GET/POST methods are allowed. You can omit C<params> if Twitter API doesn't requires option.
+Then specify it. GET and POST methods are allowed. You can omit C<params> if Twitter API doesn't require it.
 
 =item callback
 
@@ -348,14 +403,55 @@ If something is wrong with the response from Twitter API, C<$response> will be C
     sub {
         my ($header, $response, $reason) = @_;
 
-        unless ($response) {
-            print $reason, "\n";
+        if ($response) {
+            say $response->{screen_name};
         } else {
-            print $response->{screen_name}, "\n";
+            say $reason;
         }
     }
 
 =back
+
+=head1 TESTS
+
+Most of all tests are written as author tests since this module depends on remote API server.
+So if you want read code that works well, take a look at C<xt/> directory.
+
+=head1 EXPERIMENTAL METHODS
+
+Methods listed below are experimental feature. So interfaces or returned values may vary in the future.
+
+=head2 C<< AnyEvent::Twitter->get_request_token >>
+
+    AnyEvent::Twitter->get_request_token(
+        consumer_key    => $consumer_key,
+        consumer_secret => $consumer_secret,
+        callback_url    => 'http://example.com/callback',
+        # auth => 'authenticate',
+        cb => sub {
+            my ($location, $response, $body, $header) = @_;
+            # $location is the endpoint where users are asked the permission
+            # $response is a hashref of parsed body
+            # $body is raw response itself
+            # $header is response headers
+        },
+    );
+
+=head2 C<< AnyEvent::Twitter->get_access_token >>
+
+    AnyEvent::Twitter->get_access_token(
+        consumer_key       => $consumer_key,
+        consumer_secret    => $consumer_secret,
+        oauth_token        => $oauth_token,
+        oauth_token_secret => $oauth_token_secret,
+        oauth_verifier     => $oauth_verifier,
+        cb => sub {
+            my ($token, $body, $header) = @_;
+            # $token is the parsed body
+            # $body is raw response
+            # $header is response headers
+        },
+    );
 
 =head1 CONTRIBUTORS
 

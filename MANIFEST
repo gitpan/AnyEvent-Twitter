@@ -26,4 +26,5 @@ xt/03_pod.t
 xt/04_request.t
 xt/05_get.t
 xt/06_post.t
+xt/07_get_request_token.t
 xt/perlcriticrc
